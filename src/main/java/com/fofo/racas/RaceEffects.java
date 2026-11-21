@@ -463,7 +463,7 @@ public final class RaceEffects {
                 p.sendMessage(Text.literal("Solto."), true);
             } else {
                 held.setVelocity(p.getRotationVec(1.0f).multiply(TK_THROW));
-                held.velocityModified = true;
+                
                 if (held instanceof ServerPlayerEntity tp) {
                     tp.networkHandler.sendPacket(new EntityVelocityUpdateS2CPacket(tp));
                 }
