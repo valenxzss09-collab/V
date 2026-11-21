@@ -3,12 +3,13 @@
   "id": "fofo_racas",
   "version": "${version}",
   "name": "Fofo Raças",
-  "description": "Sistema de raças com vantagens e desvantagens, estilo Origins. Só precisa estar no servidor.",
+  "description": "Sistema de raças com vantagens e desvantagens, estilo Origins. Funciona só no servidor; para /mods e /texturas o jogador precisa ter o mod no cliente.",
   "authors": [],
   "license": "All-Rights-Reserved",
   "environment": "*",
   "entrypoints": {
-    "main": ["com.fofo.racas.RacasMod"]
+    "main": ["com.fofo.racas.RacasMod"],
+    "client": ["com.fofo.racas.client.RacasClient"]
   },
   "mixins": ["fofo_racas.mixins.json"],
   "depends": {

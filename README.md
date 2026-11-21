@@ -1,6 +1,7 @@
 # Fofo Raças (Fabric 1.21.11)
 
-Mod de raças estilo Origins. **Só precisa estar no servidor** (jogadores entram com o Minecraft normal).
+Mod de raças estilo Origins. **As raças só precisam estar no servidor** (jogadores entram com o Minecraft normal).
+Só `/mods` e `/texturas` exigem que o jogador tenha o mesmo `.jar` no cliente (veja abaixo).
 Requer Fabric Loader 0.18.1+, Fabric API e Java 21.
 
 ## Como gerar o .jar pelo GitHub
@@ -13,7 +14,7 @@ Requer Fabric Loader 0.18.1+, Fabric API e Java 21.
 - `/raça retirar <player>`
 - `/raça selecionar <player>` (abre o menu de novo; o jogador escolhe uma vez)
 
-IDs: kitsune, meio_besta_fera, ulfhednar, selkie, encantados_aquaticos, satiro, dvergar, banshee, lampade, spartoi, mayoirei, val, deusa
+IDs: kitsune, meio_besta_fera, ulfhednar, selkie, encantados_aquaticos, satiro, dvergar, banshee, lampade, spartoi, mayoirei, val, deusa, o
 
 Quem entra pela primeira vez recebe o menu automaticamente e não consegue usá-lo de novo sem um OP.
 As raças ficam salvas em `fofo_racas.json` na pasta do mundo.
@@ -29,6 +30,27 @@ Só OP concede (`/raça mudar <player> deusa`); não aparece no menu. Ela recebe
 - **Laser:** toque duplo no Shift (alcance 64 blocos, raio 8 no impacto, recarga de 10 s). Constantes em `RaceEffects.java`.
 - **Telecinese:** botão direito com o cajado agarra a criatura na mira (até 30 blocos); de novo arremessa; Shift + botão direito solta.
 - A tecla "-" não chega ao servidor, então não dá para usá-la sem um mod no cliente.
+
+## Raça O (só OP: `/raça mudar <player> o`)
+Imortal: todo dano é cancelado (inclusive `/kill`); no void ele volta para o alto do mundo.
+Recebe o **Cetro do O** (vara de blaze). Botão direito usa o poder atual; **Shift + botão direito troca de poder**:
+- **Explosão:** 40 explosões em linha (~120 blocos) e uma final gigante. Recarga 20 s.
+- **Congelar:** imobiliza criaturas num raio de 20 e transforma água em gelo. Recarga 10 s.
+- **Fogo:** lança-chamas por 2 s que queima alvos e acende o chão. Recarga 5 s.
+- **Telecinese:** botão direito agarra / arremessa.
+- **Escudo:** 15 s repelindo criaturas e apagando projéteis num raio de 5. Recarga 5 s.
+- **Dobrar Água:** jato d'água que empurra alvos e deixa uma poça temporária. Recarga 5 s.
+Os valores ficam no começo da seção "Raça O" em `RaceEffects.java`.
+
+## /mods, /texturas e /inv (só OP)
+- `/mods` e `/texturas`: resumo de todos os jogadores online. `/mods <player>` e `/texturas <player>`: lista completa.
+  O servidor só recebe esses dados de quem tem este `.jar` instalado no cliente; sem ele aparece "sem dados".
+  Quando o cliente envia a lista, o jogador recebe um aviso no chat.
+- `/inv <player>`: abre o inventário do jogador e **dá para pegar, colocar e trocar itens** (inclusive armadura e mão secundária). A edição é ao vivo. Shift+clique fica desativado.
+
+## HUD de habilidades (cliente)
+Quem tem este `.jar` no cliente vê um painel à esquerda da tela com as habilidades da própria raça
+(na raça O, mostra os 6 poderes e destaca o selecionado). `/fofohud` liga e desliga. Quem não tem o mod joga normal, sem o painel.
 
 ## Tab
 A lista de jogadores mostra `Raça - Nome`.

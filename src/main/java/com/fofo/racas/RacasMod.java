@@ -40,7 +40,12 @@ public class RacasMod implements ModInitializer {
             RaceCommand.register(dispatcher);
             InfoCommand.register(dispatcher);
             BuffCommand.register(dispatcher);
+            ViewCommands.register(dispatcher);
         });
+
+        // Recebe a lista de mods/texturas enviada pelo cliente (/mods e /texturas).
+        ClientInfo.register();
+        RaceSync.register();
 
         ServerTickEvents.END_SERVER_TICK.register(RaceEffects::tick);
 
@@ -52,6 +57,7 @@ public class RacasMod implements ModInitializer {
             if (r != null) RaceEffects.apply(p, r, 0);
             RaceEffects.applyBuffs(p);
             refreshTab(p);
+            RaceSync.send(p);
         });
 
         // Selkie: animais não fogem quando levam hit.
@@ -101,6 +107,9 @@ public class RacasMod implements ModInitializer {
         if (r == Race.DEUSA && hand == Hand.MAIN_HAND && sp.getMainHandStack().isOf(Items.STICK)) {
             return RaceEffects.wandUse(sp);
         }
+        if (r == Race.O && hand == Hand.MAIN_HAND && sp.getMainHandStack().isOf(Items.BLAZE_ROD)) {
+            return RaceEffects.oWandUse(sp);
+        }
         if (r == Race.LAMPADE) return torches(sp, hand);
         return ActionResult.PASS;
     }
@@ -122,6 +131,7 @@ public class RacasMod implements ModInitializer {
         data.setRace(p.getUuid(), race);
         RaceEffects.apply(p, race, 0);
         p.setHealth(p.getMaxHealth());
+        RaceSync.send(p);
         p.sendMessage(Text.literal("Você agora é " + race.display + "!"), false);
         refreshTab(p);
         if (race == Race.DEUSA) {
@@ -130,6 +140,12 @@ public class RacasMod implements ModInitializer {
             p.getInventory().offerOrDrop(wand);
             p.sendMessage(Text.literal("Laser: toque duplo no Shift. Telecinese: botão direito com o cajado."), false);
         }
+        if (race == Race.O) {
+            ItemStack rod = new ItemStack(Items.BLAZE_ROD);
+            rod.set(DataComponentTypes.CUSTOM_NAME, Text.literal("Cetro do O"));
+            p.getInventory().offerOrDrop(rod);
+            p.sendMessage(Text.literal("Cetro do O: botão direito usa o poder, Shift + botão direito troca de poder."), false);
+        }
     }
 
     public static void removeRace(ServerPlayerEntity p) {
@@ -137,6 +153,7 @@ public class RacasMod implements ModInitializer {
         Race old = data.getRace(p.getUuid());
         RaceEffects.clear(p, old);
         data.removeRace(p.getUuid());
+        RaceSync.send(p);
         p.sendMessage(Text.literal("Sua raça foi removida."), false);
         refreshTab(p);
     }

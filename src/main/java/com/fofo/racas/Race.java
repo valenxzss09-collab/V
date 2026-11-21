@@ -66,7 +66,17 @@ public enum Race {
         "+ Imune a queda, fogo e afogamento",
         "+ Laser: toque duplo no Shift (destrói muitos blocos)",
         "+ Telecinese: botão direito com o cajado (graveto)",
-        "- Laser tem recarga de 10 segundos");
+        "- Laser tem recarga de 10 segundos"),
+    O("o", "O", Blocks.CRYING_OBSIDIAN,
+        "+ Imortal: nenhum dano te mata (nem /kill nem o void)",
+        "+ Cetro do O (vara de blaze): botão direito usa o poder, Shift + botão direito troca",
+        "+ Explosão gigante e longa, Congelar, Fogo, Telecinese, Escudo e Dobrar Água",
+        "+ Sem fome, respira na água e imune a fogo",
+        "- Cada poder tem recarga");
+
+    /** Poderes do O, na mesma ordem de RaceEffects.OPower (usado pelo HUD). */
+    public static final List<String> O_POWERS =
+        List.of("Explosão", "Congelar", "Fogo", "Telecinese", "Escudo", "Dobrar Água");
 
     public final String id;
     public final String display;
@@ -80,9 +90,9 @@ public enum Race {
         this.lore = List.of(lore);
     }
 
-    /** Raças que aparecem no menu. A Deusa só pode ser dada por OP (/raça mudar). */
+    /** Raças que aparecem no menu. A Deusa e o O só podem ser dados por OP (/raça mudar). */
     public static Race[] menuRaces() {
-        return Arrays.stream(values()).filter(r -> r != DEUSA).toArray(Race[]::new);
+        return Arrays.stream(values()).filter(r -> r != DEUSA && r != O).toArray(Race[]::new);
     }
 
     public static Race byId(String id) {

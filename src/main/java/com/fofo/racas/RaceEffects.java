@@ -25,6 +25,7 @@ import net.minecraft.entity.mob.AbstractSkeletonEntity;
 import net.minecraft.entity.mob.MobEntity;
 import net.minecraft.entity.mob.ZombieEntity;
 import net.minecraft.entity.passive.WolfEntity;
+import net.minecraft.entity.projectile.ProjectileEntity;
 import net.minecraft.entity.player.PlayerEntity;
 import net.minecraft.network.packet.s2c.play.EntityVelocityUpdateS2CPacket;
 import net.minecraft.util.ActionResult;
@@ -67,6 +68,8 @@ public final class RaceEffects {
 
     public static void tick(MinecraftServer server) {
         int t = server.getTicks();
+        currentTick = t;
+        runScheduled(t);
 
         if (!CONVERSIONS.isEmpty()) {
             for (Conversion c : CONVERSIONS) convertDrops(c);
@@ -81,6 +84,11 @@ public final class RaceEffects {
             Race r = data.getRace(p.getUuid());
             if (r == Race.DEUSA) {
                 supremaSneak(p, t);
+                telekinesisTick(p);
+            }
+            if (r == Race.O) {
+                immortalTick(p);
+                shieldTick(p);
                 telekinesisTick(p);
             }
             if (!scan && !full) continue;
@@ -182,6 +190,14 @@ public final class RaceEffects {
                 hm.setSaturationLevel(20.0f);
                 enableFlight(p);
             }
+            case O -> {
+                want(p, StatusEffects.WATER_BREATHING, 0, true);
+                want(p, StatusEffects.FIRE_RESISTANCE, 0, true);
+                want(p, StatusEffects.DOLPHINS_GRACE, 0, water);
+                HungerManager hm = p.getHungerManager();
+                hm.setFoodLevel(20);
+                hm.setSaturationLevel(20.0f);
+            }
             case VAL -> {
                 GameMode gm = p.interactionManager.getGameMode();
                 if ((gm == GameMode.SURVIVAL || gm == GameMode.ADVENTURE) && !p.getAbilities().allowFlying) {
@@ -211,6 +227,11 @@ public final class RaceEffects {
         // Efeitos aplicados por este mod são "ambient"; poções normais não são.
         for (StatusEffectInstance e : new ArrayList<>(p.getStatusEffects())) {
             if (e.isAmbient()) p.removeStatusEffect(e.getEffectType());
+        }
+
+        if (old == Race.O) {
+            SHIELD_UNTIL.remove(p.getUuid());
+            GRABBED.remove(p.getUuid());
         }
 
         if (old == Race.VAL || old == Race.DEUSA) {
@@ -292,6 +313,9 @@ public final class RaceEffects {
                     }
                     case DEUSA -> {
                         if (src.isIn(DamageTypeTags.IS_FALL)) return -1f;
+                    }
+                    case O -> {
+                        return -1f; // imortal: cancela qualquer dano
                     }
                     default -> { }
                 }
@@ -463,7 +487,6 @@ public final class RaceEffects {
                 p.sendMessage(Text.literal("Solto."), true);
             } else {
                 held.setVelocity(p.getRotationVec(1.0f).multiply(TK_THROW));
-                
                 if (held instanceof ServerPlayerEntity tp) {
                     tp.networkHandler.sendPacket(new EntityVelocityUpdateS2CPacket(tp));
                 }
@@ -512,5 +535,360 @@ public final class RaceEffects {
         target.requestTeleport(nx, ny, nz);
         target.setVelocity(Vec3d.ZERO);
         target.fallDistance = 0;
+    }
+
+    // =========================================================== Raça O
+    // Imortal + Cetro do O (vara de blaze). Botão direito = usa o poder atual,
+    // Shift + botão direito = troca de poder.
+
+    private enum OPower {
+        EXPLOSAO("Explosão", 400),
+        CONGELAR("Congelar", 200),
+        FOGO("Fogo", 100),
+        TELECINESE("Telecinese", 0),
+        ESCUDO("Escudo", 100),
+        AGUA("Dobrar Água", 100);
+
+        final String label;
+        final long cooldown; // ticks
+
+        OPower(String label, long cooldown) {
+            this.label = label;
+            this.cooldown = cooldown;
+        }
+    }
+
+    // ---- constantes (mexa aqui para balancear) ----
+    private static final int EXPL_STEPS = 40;          // quantas explosões na linha
+    private static final double EXPL_START = 3.0;      // distância da 1ª explosão
+    private static final double EXPL_SPACING = 3.0;    // distância entre explosões (40 x 3 = 120 blocos)
+    private static final float EXPL_POWER = 5.0f;      // força de cada explosão
+    private static final int EXPL_CARVE = 4;           // raio de blocos destruídos em cada uma
+    private static final float EXPL_FINAL_POWER = 12.0f; // explosão final
+    private static final int EXPL_FINAL_CARVE = 12;
+    private static final double FREEZE_RADIUS = 20;    // alcance do congelamento
+    private static final int FREEZE_TICKS = 200;       // 10 s
+    private static final int ICE_RADIUS = 10;          // água vira gelo em volta
+    private static final int FIRE_TICKS = 40;          // 2 s de lança-chamas
+    private static final double FIRE_RANGE = 28;
+    private static final int WATER_TICKS = 40;         // 2 s de jato d'água
+    private static final double WATER_RANGE = 32;
+    private static final double SHIELD_RADIUS = 5.0;
+    private static final long SHIELD_DURATION = 300;   // 15 s
+
+    private static final Map<UUID, Integer> O_MODE = new HashMap<>();
+    private static final Map<String, Long> O_CD = new HashMap<>();
+    private static final Map<UUID, Long> SHIELD_UNTIL = new HashMap<>();
+
+    // ---- agendador simples (executa tarefas daqui a N ticks) ----
+    private record Scheduled(int at, Runnable task) {}
+    private static final List<Scheduled> SCHEDULED = new ArrayList<>();
+    private static int currentTick = 0;
+
+    private static void schedule(int delay, Runnable r) {
+        SCHEDULED.add(new Scheduled(currentTick + delay, r));
+    }
+
+    private static void runScheduled(int t) {
+        if (SCHEDULED.isEmpty()) return;
+        List<Scheduled> due = new ArrayList<>();
+        SCHEDULED.removeIf(s -> {
+            if (s.at() <= t) {
+                due.add(s);
+                return true;
+            }
+            return false;
+        });
+        for (Scheduled s : due) {
+            try {
+                s.task().run();
+            } catch (Exception ex) {
+                RacasMod.LOGGER.error("Erro em tarefa agendada", ex);
+            }
+        }
+    }
+
+    // ---- imortalidade ----
+    private static void immortalTick(ServerPlayerEntity p) {
+        if (!p.isAlive() || p.isSpectator()) return;
+        ServerWorld w = p.getEntityWorld();
+        if (p.getHealth() < p.getMaxHealth()) p.setHealth(p.getMaxHealth());
+        p.setAir(p.getMaxAir());
+        p.fallDistance = 0;
+        if (p.isOnFire()) p.extinguish();
+        // caiu no void: volta pro alto do mundo (o dano já é cancelado)
+        if (p.getY() < w.getBottomY() - 16) {
+            p.setVelocity(Vec3d.ZERO);
+            p.requestTeleport(p.getX(), w.getBottomY() + w.getHeight() - 2, p.getZ());
+        }
+    }
+
+    public static int oMode(UUID id) {
+        return O_MODE.getOrDefault(id, 0);
+    }
+
+    // ---- uso do cetro ----
+    public static ActionResult oWandUse(ServerPlayerEntity p) {
+        ServerWorld w = p.getEntityWorld();
+        OPower[] powers = OPower.values();
+        int idx = O_MODE.getOrDefault(p.getUuid(), 0);
+
+        if (p.isSneaking()) {
+            GRABBED.remove(p.getUuid());
+            idx = (idx + 1) % powers.length;
+            O_MODE.put(p.getUuid(), idx);
+            RaceSync.send(p);
+            p.sendMessage(Text.literal("Poder: " + powers[idx].label), true);
+            return ActionResult.SUCCESS;
+        }
+
+        OPower power = powers[idx];
+        if (power == OPower.TELECINESE) {
+            return wandUse(p); // agarra / arremessa
+        }
+
+        long now = w.getTime();
+        String key = p.getUuid() + ":" + power.name();
+        Long last = O_CD.get(key);
+        if (last != null && now - last < power.cooldown) {
+            long left = (power.cooldown - (now - last) + 19) / 20;
+            p.sendMessage(Text.literal(power.label + " recarregando: " + left + "s"), true);
+            return ActionResult.SUCCESS;
+        }
+        O_CD.put(key, now);
+
+        switch (power) {
+            case EXPLOSAO -> bigExplosion(p);
+            case CONGELAR -> freezeBlast(p);
+            case FOGO -> flamethrower(p);
+            case ESCUDO -> activateShield(p);
+            case AGUA -> waterJet(p);
+            default -> { }
+        }
+        return ActionResult.SUCCESS;
+    }
+
+    // ---- 1) explosão gigante e longa ----
+    private static void bigExplosion(ServerPlayerEntity p) {
+        ServerWorld w = p.getEntityWorld();
+        Vec3d eye = p.getEyePos();
+        Vec3d dir = p.getRotationVec(1.0f);
+        p.sendMessage(Text.literal("EXPLOSÃO!"), true);
+        for (int i = 1; i <= EXPL_STEPS; i++) {
+            final int step = i;
+            schedule(step, () -> {
+                Vec3d c = eye.add(dir.multiply(EXPL_START + step * EXPL_SPACING));
+                explodeAt(w, p, c, EXPL_POWER, EXPL_CARVE);
+            });
+        }
+        schedule(EXPL_STEPS + 5, () -> {
+            Vec3d c = eye.add(dir.multiply(EXPL_START + EXPL_STEPS * EXPL_SPACING));
+            explodeAt(w, p, c, EXPL_FINAL_POWER, EXPL_FINAL_CARVE);
+        });
+    }
+
+    private static void explodeAt(ServerWorld w, Entity source, Vec3d c, float power, int carveRadius) {
+        BlockPos bp = BlockPos.ofFloored(c);
+        if (!w.isChunkLoaded(bp)) return;
+        carve(w, bp, carveRadius);
+        w.spawnParticles(ParticleTypes.EXPLOSION_EMITTER, c.x, c.y, c.z, 1, 0.5, 0.5, 0.5, 0);
+        w.createExplosion(source, c.x, c.y, c.z, power, World.ExplosionSourceType.NONE);
+    }
+
+    // ---- 2) congelar ----
+    private static void freezeBlast(ServerPlayerEntity p) {
+        ServerWorld w = p.getEntityWorld();
+        p.sendMessage(Text.literal("CONGELAR!"), true);
+
+        Box box = p.getBoundingBox().expand(FREEZE_RADIUS);
+        for (Entity e : w.getOtherEntities(p, box, c -> c instanceof LivingEntity && c.isAlive())) {
+            if (e.distanceTo(p) > FREEZE_RADIUS) continue;
+            LivingEntity le = (LivingEntity) e;
+            le.addStatusEffect(new StatusEffectInstance(StatusEffects.SLOWNESS, FREEZE_TICKS, 255, false, true, true));
+            le.addStatusEffect(new StatusEffectInstance(StatusEffects.WEAKNESS, FREEZE_TICKS, 10, false, true, true));
+            le.addStatusEffect(new StatusEffectInstance(StatusEffects.MINING_FATIGUE, FREEZE_TICKS, 10, false, true, true));
+            le.setFrozenTicks(300);
+        }
+
+        // água em volta vira gelo
+        BlockPos c = p.getBlockPos();
+        BlockPos.Mutable m = new BlockPos.Mutable();
+        int r = ICE_RADIUS;
+        for (int x = -r; x <= r; x++) {
+            for (int y = -r; y <= r; y++) {
+                for (int z = -r; z <= r; z++) {
+                    if (x * x + y * y + z * z > r * r) continue;
+                    m.set(c.getX() + x, c.getY() + y, c.getZ() + z);
+                    if (!w.isChunkLoaded(m)) continue;
+                    if (w.getBlockState(m).isOf(Blocks.WATER)) {
+                        w.setBlockState(m, Blocks.ICE.getDefaultState(), Block.NOTIFY_ALL);
+                    }
+                }
+            }
+        }
+
+        w.spawnParticles(ParticleTypes.SNOWFLAKE, p.getX(), p.getY() + 1.0, p.getZ(),
+            400, FREEZE_RADIUS / 3.0, 2.0, FREEZE_RADIUS / 3.0, 0.05);
+        w.spawnParticles(ParticleTypes.CLOUD, p.getX(), p.getY() + 0.5, p.getZ(),
+            80, FREEZE_RADIUS / 4.0, 0.5, FREEZE_RADIUS / 4.0, 0.02);
+    }
+
+    // ---- 3) fogo (lança-chamas) ----
+    private static void flamethrower(ServerPlayerEntity p) {
+        ServerWorld w = p.getEntityWorld();
+        p.sendMessage(Text.literal("FOGO!"), true);
+        for (int i = 0; i < FIRE_TICKS; i++) {
+            final int k = i;
+            schedule(i, () -> flameTick(p, w, k));
+        }
+    }
+
+    private static void flameTick(ServerPlayerEntity p, ServerWorld w, int k) {
+        if (p.isRemoved()) return;
+        Vec3d eye = p.getEyePos();
+        Vec3d dir = p.getRotationVec(1.0f);
+        for (double d = 1.5; d <= FIRE_RANGE; d += 1.0) {
+            Vec3d pt = eye.add(dir.multiply(d));
+            BlockPos bp = BlockPos.ofFloored(pt);
+            if (!w.isChunkLoaded(bp)) break;
+            BlockState s = w.getBlockState(bp);
+            if (!s.isAir() && !s.isOf(Blocks.FIRE)) {
+                igniteAround(w, bp.up());
+                break;
+            }
+            double spread = 0.15 + d * 0.04;
+            w.spawnParticles(ParticleTypes.FLAME, pt.x, pt.y, pt.z, 2, spread, spread, spread, 0.01);
+            if (k % 8 == 0 && ((int) d) % 3 == 0) igniteGround(w, bp);
+
+            Box b = new Box(pt, pt).expand(1.5 + d * 0.05);
+            for (Entity e : w.getOtherEntities(p, b, c -> c instanceof LivingEntity && c.isAlive())) {
+                e.setOnFireFor(12);
+                if (k % 5 == 0) e.damage(w, w.getDamageSources().playerAttack(p), 3.0f);
+            }
+        }
+    }
+
+    private static void igniteGround(ServerWorld w, BlockPos from) {
+        for (int dy = 0; dy <= 3; dy++) {
+            BlockPos pos = from.down(dy);
+            if (w.getBlockState(pos).isAir() && w.getBlockState(pos.down()).isSolidBlock(w, pos.down())) {
+                w.setBlockState(pos, Blocks.FIRE.getDefaultState(), Block.NOTIFY_ALL);
+                return;
+            }
+        }
+    }
+
+    private static void igniteAround(ServerWorld w, BlockPos center) {
+        for (int dx = -1; dx <= 1; dx++) {
+            for (int dz = -1; dz <= 1; dz++) {
+                BlockPos pos = center.add(dx, 0, dz);
+                if (w.isChunkLoaded(pos) && w.getBlockState(pos).isAir()
+                    && w.getBlockState(pos.down()).isSolidBlock(w, pos.down())) {
+                    w.setBlockState(pos, Blocks.FIRE.getDefaultState(), Block.NOTIFY_ALL);
+                }
+            }
+        }
+    }
+
+    // ---- 4) escudo ----
+    private static void activateShield(ServerPlayerEntity p) {
+        SHIELD_UNTIL.put(p.getUuid(), p.getEntityWorld().getTime() + SHIELD_DURATION);
+        p.sendMessage(Text.literal("ESCUDO ativado!"), true);
+    }
+
+    private static void shieldTick(ServerPlayerEntity p) {
+        Long until = SHIELD_UNTIL.get(p.getUuid());
+        if (until == null) return;
+        ServerWorld w = p.getEntityWorld();
+        long now = w.getTime();
+        if (now > until) {
+            SHIELD_UNTIL.remove(p.getUuid());
+            p.sendMessage(Text.literal("Escudo acabou."), true);
+            return;
+        }
+        double cx = p.getX();
+        double cy = p.getY() + 1.0;
+        double cz = p.getZ();
+        double R = SHIELD_RADIUS;
+
+        if (now % 2 == 0) {
+            for (int i = 0; i < 20; i++) {
+                double dx = p.getRandom().nextGaussian();
+                double dy = p.getRandom().nextGaussian();
+                double dz = p.getRandom().nextGaussian();
+                double len = Math.sqrt(dx * dx + dy * dy + dz * dz);
+                if (len < 1e-4) continue;
+                w.spawnParticles(ParticleTypes.END_ROD,
+                    cx + dx / len * R, cy + dy / len * R, cz + dz / len * R, 1, 0, 0, 0, 0);
+            }
+        }
+
+        Box box = p.getBoundingBox().expand(R);
+        for (Entity e : w.getOtherEntities(p, box, c -> c.isAlive())) {
+            double ex = e.getX() - cx;
+            double ey = (e.getY() + e.getHeight() / 2.0) - cy;
+            double ez = e.getZ() - cz;
+            double d = Math.sqrt(ex * ex + ey * ey + ez * ez);
+            if (d > R || d < 1e-4) continue;
+            if (e instanceof ProjectileEntity) {
+                e.discard();
+                continue;
+            }
+            if (!(e instanceof LivingEntity)) continue;
+            double k = 0.9 / d;
+            e.setVelocity(ex * k, 0.25, ez * k);
+            if (e instanceof ServerPlayerEntity tp) {
+                tp.networkHandler.sendPacket(new EntityVelocityUpdateS2CPacket(tp));
+            }
+        }
+    }
+
+    // ---- 5) dobrar água (jato) ----
+    private static void waterJet(ServerPlayerEntity p) {
+        ServerWorld w = p.getEntityWorld();
+        p.sendMessage(Text.literal("ÁGUA!"), true);
+        for (int i = 0; i < WATER_TICKS; i++) {
+            final int k = i;
+            schedule(i, () -> waterTick(p, w, k));
+        }
+    }
+
+    private static void waterTick(ServerPlayerEntity p, ServerWorld w, int k) {
+        if (p.isRemoved()) return;
+        Vec3d eye = p.getEyePos();
+        Vec3d dir = p.getRotationVec(1.0f);
+        BlockPos last = null;
+        for (double d = 1.5; d <= WATER_RANGE; d += 1.0) {
+            Vec3d pt = eye.add(dir.multiply(d));
+            BlockPos bp = BlockPos.ofFloored(pt);
+            if (!w.isChunkLoaded(bp)) break;
+            BlockState s = w.getBlockState(bp);
+            if (!s.isAir() && !s.isOf(Blocks.WATER)) break;
+            last = bp;
+            double spread = 0.12 + d * 0.03;
+            w.spawnParticles(ParticleTypes.SPLASH, pt.x, pt.y, pt.z, 4, spread, spread, spread, 0.1);
+            w.spawnParticles(ParticleTypes.FALLING_WATER, pt.x, pt.y, pt.z, 2, spread, spread, spread, 0.0);
+
+            Box b = new Box(pt, pt).expand(1.5 + d * 0.05);
+            for (Entity e : w.getOtherEntities(p, b, c -> c instanceof LivingEntity && c.isAlive())) {
+                e.setVelocity(dir.x * 1.2, dir.y * 1.2 + 0.15, dir.z * 1.2);
+                e.extinguish();
+                if (e instanceof ServerPlayerEntity tp) {
+                    tp.networkHandler.sendPacket(new EntityVelocityUpdateS2CPacket(tp));
+                }
+                if (k % 5 == 0) e.damage(w, w.getDamageSources().playerAttack(p), 2.0f);
+            }
+        }
+
+        // no último tick, deixa uma poça de água que some depois
+        if (k == WATER_TICKS - 1 && last != null && w.getBlockState(last).isAir()) {
+            final BlockPos pool = last;
+            w.setBlockState(pool, Blocks.WATER.getDefaultState(), Block.NOTIFY_ALL);
+            schedule(100, () -> {
+                if (w.isChunkLoaded(pool) && w.getBlockState(pool).isOf(Blocks.WATER)) {
+                    w.setBlockState(pool, Blocks.AIR.getDefaultState(), Block.NOTIFY_ALL);
+                }
+            });
+        }
     }
 }
