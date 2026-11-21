@@ -1,0 +1,20 @@
+{
+  "schemaVersion": 1,
+  "id": "fofo_racas",
+  "version": "${version}",
+  "name": "Fofo Raças",
+  "description": "Sistema de raças com vantagens e desvantagens, estilo Origins. Só precisa estar no servidor.",
+  "authors": [],
+  "license": "All-Rights-Reserved",
+  "environment": "*",
+  "entrypoints": {
+    "main": ["com.fofo.racas.RacasMod"]
+  },
+  "mixins": ["fofo_racas.mixins.json"],
+  "depends": {
+    "fabricloader": ">=0.18.1",
+    "minecraft": "~1.21.11",
+    "java": ">=21",
+    "fabric-api": "*"
+  }
+}
